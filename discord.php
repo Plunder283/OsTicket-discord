@@ -63,8 +63,7 @@ class DiscordPlugin extends Plugin {
     }
 
     protected function dispatch($enableKey, $tplKey, $ticket, $vars) {
-        $instances = Plugin::getInstances('discord', true);
-        foreach ($instances as $instance) {
+        foreach ($this->getActiveInstances() as $instance) {
             $cfg = $instance->getConfig();
 
             $url = trim($cfg->get('discord_webhook_url'));
