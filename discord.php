@@ -7,12 +7,25 @@ class DiscordPlugin extends Plugin {
     var $config_class = 'DiscordConfig';
 
     function bootstrap() {
+        $this->debugLog('bootstrap() called, connecting signals');
         Signal::connect('ticket.created', [$this, 'onTicketCreated']);
         Signal::connect('threadentry.created', [$this, 'onAgentReply'], 'ResponseThreadEntry');
         Signal::connect('threadentry.created', [$this, 'onNewMessage'], 'MessageThreadEntry');
         // osTicket has no dedicated "status changed" signal, so status/close
         // transitions are detected off the generic ORM save signal instead.
         Signal::connect('model.updated', [$this, 'onModelUpdated'], 'Ticket');
+    }
+
+    // Temporary debug helper: writes to a file inside the plugin's own
+    // directory so it can be inspected via FTP/file manager even when the
+    // server's PHP/webserver error log isn't accessible. Remove once the
+    // "no webhook fires" issue is diagnosed.
+    protected function debugLog($msg) {
+        @file_put_contents(
+            __DIR__ . '/discord_debug.log',
+            '[' . date('Y-m-d H:i:s') . '] ' . $msg . "\n",
+            FILE_APPEND
+        );
     }
 
     function onTicketCreated($ticket) {
@@ -69,22 +82,35 @@ class DiscordPlugin extends Plugin {
         // creation/reply request that triggered it. Never let a Discord
         // notification failure break core ticket handling.
         try {
-            foreach ($this->getActiveInstances() as $instance) {
+            $instances = $this->getActiveInstances();
+            $this->debugLog("dispatch({$enableKey}) called for ticket #{$ticket->getNumber()}, "
+                . count($instances) . ' active instance(s)');
+
+            foreach ($instances as $instance) {
                 $cfg = $instance->getConfig();
 
                 $url = trim($cfg->get('discord_webhook_url'));
-                if (!$url || !$cfg->get($enableKey))
+                if (!$url) {
+                    $this->debugLog("  instance {$instance->getId()}: skipped, no webhook URL configured");
                     continue;
+                }
+                if (!$cfg->get($enableKey)) {
+                    $this->debugLog("  instance {$instance->getId()}: skipped, '{$enableKey}' not enabled");
+                    continue;
+                }
 
                 $username   = trim($cfg->get('discord_username')) ?: 'osTicket';
                 $avatar_url = trim($cfg->get('discord_avatar_url')) ?: '';
                 $mention    = ($enableKey == 'notify_new_ticket') ? trim($cfg->get('discord_mention')) : '';
 
                 $content = $this->renderTemplate($cfg->get($tplKey), $ticket, $vars + ['mention' => $mention]);
+                $this->debugLog("  instance {$instance->getId()}: posting to Discord, content length "
+                    . mb_strlen($content));
                 $this->postToDiscord($url, $username, $avatar_url, $content);
             }
         } catch (\Throwable $e) {
             error_log('DiscordPlugin dispatch error: ' . $e->getMessage());
+            $this->debugLog('dispatch error: ' . $e->getMessage() . ' at ' . $e->getFile() . ':' . $e->getLine());
         }
     }
 
@@ -151,8 +177,12 @@ class DiscordPlugin extends Plugin {
         $httpcode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         curl_close($ch);
 
-        if ($errno || $httpcode >= 300)
+        if ($errno || $httpcode >= 300) {
             error_log("DiscordPlugin webhook error: code={$httpcode} errno={$errno} err='{$errmsg}' resp='{$resp}'");
+            $this->debugLog("webhook error: code={$httpcode} errno={$errno} err='{$errmsg}' resp='{$resp}'");
+        } else {
+            $this->debugLog("webhook post succeeded: code={$httpcode}");
+        }
     }
 }
 ?>
