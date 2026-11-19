@@ -185,6 +185,8 @@ class DiscordPlugin extends Plugin {
     }
 
     protected function buildEmbed($enableKey, $ticket, $vars, $description) {
+        global $cfg;
+
         $meta = $this->eventMeta($enableKey);
 
         // Discord always renders `description` above `fields`, regardless of
@@ -212,6 +214,7 @@ class DiscordPlugin extends Plugin {
 
         return [
             'title'       => sprintf('%s %s — Ticket #%s', $meta['emoji'], $meta['label'], $ticket->getNumber()),
+            'url'         => rtrim($cfg->getUrl(), '/') . '/scp/tickets.php?id=' . $ticket->getId(),
             'description' => implode("\n\n", $sections),
             'color'       => $meta['color'],
             'fields'      => $fields,
